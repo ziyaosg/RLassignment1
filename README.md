@@ -3,6 +3,7 @@
 Algoithm picked: 
 
 TAMER framework
+
 ![pseudocode_RL](tamer/pseudocode_TAMER.png)
 
 Bayesian IRL
