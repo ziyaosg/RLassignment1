@@ -1,4 +1,4 @@
-# RLassignment1
+# RL assignment 1
 
 Algoithm picked: 
 
