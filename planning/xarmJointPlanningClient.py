@@ -10,6 +10,13 @@ import numpy as np
 import sys
 import argparse
 
+from std_msgs.msg import String
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from tf2_ros import TransformException
+from tf2_msgs.msg import TFMessage
+
+
 
 class xarmJointPlanningClient(Node):
 
@@ -17,6 +24,11 @@ class xarmJointPlanningClient(Node):
         super().__init__('xarm_joint_planning_client')
         self.plan_cli = self.create_client(PlanJoint, 'xarm_joint_plan')
         self.exec_cli = self.create_client(PlanExec, 'xarm_exec_plan')
+
+        self.target_frame = 'link_eef'
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         
 
     def send_plan_request(self,pose):
@@ -89,14 +101,29 @@ def main():
     for lines in data:
         jt_traj.append(lines[1:-1])
     #print(jt_traj)
+    filename_prefix = "../eefPlanning/shortest_path_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(traj)
+    eef_file = filename_prefix + "_eef.txt"
 
-    for i in range(len(jt_traj)):
-        target_pose = jt_traj[i].split(',')
-        target_pose = [float(m) for m in target_pose]
-        response = client.plan_and_execute(target_pose)
-        print(response)
+    with open(eef_file, 'w') as file:
+        for i in range(len(jt_traj)):
+            target_pose = jt_traj[i].split(',')
+            target_pose = [float(m) for m in target_pose]
+            response = client.plan_and_execute(target_pose)
+            print(response)
 
+            trans = client.tf_buffer.lookup_transform(
+                'world',
+                'link_eef',
+                rclpy.time.Time())
 
+            pose_now = [
+                trans.transform.translation.x,
+               trans.transform.translation.y,
+                trans.transform.translation.z,
+            ]
+
+            file.write(str(pose_now) + '\n')      
+    file.close()  
     client.destroy_node()
     rclpy.shutdown()
 
