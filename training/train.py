@@ -76,6 +76,7 @@ model.compile(loss='mean_squared_error', optimizer='adam')
 
 history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs = 50, batch_size = 10)
 
-scores = model.evalutate(X_test, y_test)
+scores = model.evaluate(X_test, y_test)
 print(f"Test Loss: {scores}")
 
+model.save('my_model.h5')
