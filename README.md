@@ -1,4 +1,4 @@
-# RL assignment 1
+# RL assignment 1 Report
 
 ## This github repo is for CPSC 589 Spring '24 HW1
 
@@ -21,6 +21,14 @@ Tamer aims to predict human reward given the oneline human feedback, then using 
 ![pseudocode_IRL](bayesianIRL/Pseudocode_BayesianIRL.png)
 
 Bayesian IRL aims to generate a probability distribution over the sapce of reward functions using Inverse Reinforcement Learning. In other words, this method focuses on inferring $P(reward | Demonstration)$. However, BIRL assumes that the expert has the attention to maximize the reward function of the given behavior, and since the provided demonstrations do not explicitly exhibit behaviors such as object avoiding, I will slightly modify the BIRL to make it suitable for my task. First, I assume $P(reward)$ and $P(D)$ is uniform, so that I only need to calculate $P(Demonstration | reward)$. Second, since I've already assigned human reward for all the demonstrations from previous task, I can approximate $P(Demonstration| reward)$ by using the expert reward (the ground truth $\hat{R}$) and the proposed reward ($\tilde{R}$). In my case, $P(Demonstration| reward) = e^{-(\hat{R} - \tilde{R})^2}$. Since the expert reward only covers states that is in the demonstration, I would need to train an MLP that could generate expert reward for all the states. Lastly, the robot will need to do online approximation of $\hat{R}$ using $\tilde{R}$, and use $\tilde{R}$ to guide its behavior.
+
+#### Comparison
+
+Both TAMER and BIRL are trying to approximate expert's reward for state-action pairs. However, BIRL focuses on the exact reward given by the expert, while BIRL focuses on inferring unknown reward from demonstration in a probabilistic way.
+
+I choose these two algorithms because I want to compare the performance of RL and IRL in general.
+
+For this specific assignment, I believe TAMER will have better performance, since TAMER only cares about human reward to different states and does not rely on expert's demonstration. In comparison, BIRL has the assumption that the expert demonstration tries to maximize the unknown reward function, which is not suitable for this task where I want to train the robot to learn new behaviors that's not demonstrated by the expert.
 
 ### Feedback to the trajectories
 
@@ -68,4 +76,20 @@ Table below is the recorded Goal and Decoy positions in different environments
 |Env 3, Decoy 2  |-0.16924		 |0.226221     |1.2826      |
 |Env 3, Decoy 3  |-0.099357              |0.12819      |1.32999     |
 |Env 3, Decoy 4  |-0.024455	  	 |0.073603     |1.2148      |
+
+### Training and Testing result
+
+#### TAMER
+
+![model evaluation](tamer/comparison_plots.png)
+
+As we can see from the evaluation, the performance of the model gets better with more training samples. In general, I would recommend using TAMER if we want the robot to learn new behaviors that is not shown in by the expert's demonstration.
+
+#### BIRL
+
+![model evaluation](bayesianIRL/comparison_plots.png)
+
+As we can see from the evaluation, the performance of the model gets better with more training samples. In general, I would recommend BIRL if we want the robot to simply learn what is demonstrated by the human expert, and under the situations where $P(\text{Demonstration} | \text{reward})$ is easy to calculate.
+
+
 
