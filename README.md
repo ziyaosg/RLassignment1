@@ -1,16 +1,29 @@
 # RL assignment 1
 
-Algoithm picked: 
+## This github repo is for CPSC 589 Spring '24 HW1
 
-TAMER framework
+### Behaviors to learn
+
+1. Go directly to the Goal
+2. Go to the Goal but avoid the Decoys
+3. Go to the Goal but is attracted to the Decoys
+
+### Algoithm picked
+
+#### [TAMER](https://www.researchgate.net/publication/220916820_Interactively_shaping_agents_via_human_reinforcement_the_TAMER_framework) framework
 
 ![pseudocode_RL](tamer/pseudocode_TAMER.png)
 
-Bayesian IRL
+Tamer aims to predict human reward given the oneline human feedback, then using the reward to guide the robot's behavior. For this assignment, I would use MLP to replace the ReinModel provided in the pseudocode. Further, since we already have demonstration data, I will seperate the training and executing process. In other words, I will first do an offline training on human rewards for given demonstrations, then using the trained model to guide robot's behavior.
+
+#### [Bayesian IRL](https://www.researchgate.net/publication/220815343_Bayesian_Inverse_Reinforcement_Learning) 
 
 ![pseudocode_IRL](bayesianIRL/Pseudocode_BayesianIRL.png)
 
+Bayesian IRL aims to generate a probability distribution over the sapce of reward functions using Inverse Reinforcement Learning. In other words, this method focuses on inferring $P(reward | Demonstration)$. However, BIRL assumes that the expert has the attention to maximize the reward function of the given behavior, and since the provided demonstrations do not explicitly exhibit behaviors such as object avoiding, I will slightly modify the BIRL to make it suitable for my task. First, I assume $P(reward)$ and $P(D)$ is uniform, so that I only need to calculate $P(Demonstration | reward)$. Second, since I've already assigned human reward for all the demonstrations from previous task, I can approximate $P(Demonstration| reward)$ by using the expert reward (the ground truth $\hat{R}$) and the proposed reward ($\tilde{R}$). In my case, $P(Demonstration| reward) = e^{-(\hat{R} - \tilde{R})^2}$. Since the expert reward only covers states that is in the demonstration, I would need to train an MLP that could generate expert reward for all the states. Lastly, the robot will need to do online approximation of $\hat{R}$ using $\tilde{R}$, and use $\tilde{R}$ to guide its behavior.
 
+
+### 
 
 Robot position with respect to the World: $[-0.2, -0.5, 1.021]$
 
