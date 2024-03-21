@@ -10,6 +10,7 @@ from keras.models import load_model
 import argparse
 import numpy as np
 
+
 class PolicyPublisher(Node):
 
     def __init__(self, env, goal, task, goal_pose, decoy_pose, actions, model):
@@ -36,13 +37,12 @@ class PolicyPublisher(Node):
         # This will check the robot's current end-effector pose every 0.1 seconds
         self.tf_timer = self.create_timer(0.1, self.eef_callback)
 
-
     def eef_callback(self):
         # Look up the end-effector pose using the transform tree
         try:
             t = self.tf_buffer.lookup_transform(
-                "link_base", #to_frame_rel,
-                "link_eef", #from_frame_rel,
+                "link_base",  # to_frame_rel,
+                "link_eef",  # from_frame_rel,
                 rclpy.time.Time())
         except TransformException as ex:
             self.get_logger().info(
@@ -52,6 +52,23 @@ class PolicyPublisher(Node):
 
         self.ee_pose = t.transform.translation
 
+    def sample_reward(self, current_reward):
+        return current_reward + 0.25 * np.random.randn()
+
+    def likelihood(self, reward, state_score):
+        return np.exp(-np.square(reward - state_score))
+
+    def calculate_reward(self, state):
+        current_reward = np.random.rand()
+        state_score = self.model.predict(state)[self.task]
+        for i in range(50):
+            proposed_reward = self.sample_reward(current_reward)
+            acceptance_probability = min(1, self.likelihood(proposed_reward, state_score) / self.likelihood(current_reward, state_score))
+
+            if np.random.rand() < acceptance_probability:
+                current_reward = proposed_reward
+
+        return current_reward
 
     def policy_callback(self):
         if self.ee_pose is None:
@@ -66,7 +83,7 @@ class PolicyPublisher(Node):
                 future_pose = current_pose + action
                 input_state = np.append(future_pose, self.goal_pose)
                 input_state = np.append(input_state, self.decoy_pose)
-                r = self.model.predict(input_state)[self.task]
+                r = self.calculate_reward(input_state)
                 reward.append(r)
             index = np.argmax(reward)
             result = self.actions[index]
@@ -81,31 +98,41 @@ class PolicyPublisher(Node):
             twist.twist.angular.z = 0.0
             twist.header.frame_id = "link_base"
             twist.header.stamp = self.get_clock().now().to_msg()
-    
+
             self.publisher_.publish(twist)
 
+
 def main(args=None):
-    env1_goal = np.array([[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
-    env2_goal = np.array([[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
-    env3_goal = np.array([[-0.035, 0.042, 1.145], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.042, 1.145]])
+    env1_goal = np.array(
+        [[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
+    env2_goal = np.array(
+        [[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
+    env3_goal = np.array(
+        [[-0.035, 0.042, 1.145], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.042, 1.145]])
     goals = np.array([env1_goal, env2_goal, env3_goal])
-    env1_decoy = np.array([[-0.383379, 0.165331, 1.14576], [-0.183635, 0.239076, 1.31077], [-0.153111, 0.110957, 1.29395], [0.022497, 0.180345, 1.1708]])
-    env2_decoy = np.array([[-0.416498, 0.078665, 1.32583], [-0.196313, 0.310306, 1.34149], [-0.133594, 0.184351, 1.34316], [-0.074792, 0.148929, 1.43017]])
-    env3_decoy = np.array([[-0.344683, 0.024459, 1.20518], [-0.16924, 0.226221, 1.2826], [-0.099357, 0.12819, 1.32999], [-0.024455, 0.073603, 1.2148]])
+    env1_decoy = np.array(
+        [[-0.383379, 0.165331, 1.14576], [-0.183635, 0.239076, 1.31077], [-0.153111, 0.110957, 1.29395],
+         [0.022497, 0.180345, 1.1708]])
+    env2_decoy = np.array(
+        [[-0.416498, 0.078665, 1.32583], [-0.196313, 0.310306, 1.34149], [-0.133594, 0.184351, 1.34316],
+         [-0.074792, 0.148929, 1.43017]])
+    env3_decoy = np.array([[-0.344683, 0.024459, 1.20518], [-0.16924, 0.226221, 1.2826], [-0.099357, 0.12819, 1.32999],
+                           [-0.024455, 0.073603, 1.2148]])
     decoys = np.array([env1_decoy, env2_decoy, env3_decoy])
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("-env", "--environment", dest = "env", default = 1, help="Environment number", type=int)
-    parser.add_argument("-g", "--goal", dest = "g", default = 1, help="Goal number", type=int)
-    parser.add_argument("-task", "--task",dest ="task", default = 1, help="Task number", type=int)
-    parser.add_argument("-number", "--number", dest = "number", default = 435, help = "Number of Training Samples 435, 326, 217, or 108", type = int)
+    parser.add_argument("-env", "--environment", dest="env", default=1, help="Environment number", type=int)
+    parser.add_argument("-g", "--goal", dest="g", default=1, help="Goal number", type=int)
+    parser.add_argument("-task", "--task", dest="task", default=1, help="Task number", type=int)
+    parser.add_argument("-number", "--number", dest="number", default=435,
+                        help="Number of Training Samples 435, 326, 217, or 108", type=int)
 
     args = parser.parse_args()
 
-    env = args.env - 1 # 1~3
-    g = args.g - 1 # 1~8
-    task = args.task - 1 # 1~3
+    env = args.env - 1  # 1~3
+    g = args.g - 1  # 1~8
+    task = args.task - 1  # 1~3
     number = args.number
 
     model_name = "435_training_sample_model.h5"
@@ -116,8 +143,6 @@ def main(args=None):
         model_name = "217_training_sample_model.h5"
     elif number == 326:
         model_name = "326_training_sample_model.h5"
-
-
 
     # Sample policy that will move the end-effector in a box-like shape
     model = load_model(model_name)
