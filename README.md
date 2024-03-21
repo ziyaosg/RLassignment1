@@ -91,5 +91,10 @@ As we can see from the evaluation, the performance of the model gets better with
 
 As we can see from the evaluation, the performance of the model gets better with more training samples. In general, I would recommend BIRL if we want the robot to simply learn what is demonstrated by the human expert, and under the situations where $P(\text{Demonstration} | \text{reward})$ is easy to calculate.
 
+#### Conclusion
+
+The result is just what I expected for TAMER and BIRL.
+
+
 
 
