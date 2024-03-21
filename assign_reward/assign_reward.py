@@ -14,7 +14,7 @@ def calcualte_reward(pose, goal, decoy):
     distance_decoy3 = square_root_difference(pose, decoy[2])
     distance_decoy4 = square_root_difference(pose, decoy[3])
     raw_score = np.array([distance_goal, distance_decoy1, distance_decoy2, distance_decoy3, distance_decoy4])
-    return np.array([np.dot(weight1, raw_score), np.dot(weight2, raw_score), np.dot(weight3, raw_score)])
+    return np.array([np.exp(- np.dot(weight1, raw_score)), np.exp(- np.dot(weight2, raw_score)), np.exp(- np.dot(weight3, raw_score))])
 
 env1_goal = np.array([[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
 env2_goal = np.array([[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
@@ -47,6 +47,7 @@ for i in range(3):
                 for n in range(len(jt_traj)):
                     ee_pose = jt_traj[n].split(',')
                     ee_pose = [float(m) for m in ee_pose]
+                    ee_pose = [-0.2-ee_pose[1], -0.5+ee_pose[0], 1.021 + ee_pose[2]]
                     reward = calcualte_reward(ee_pose, goals[i][j], decoys[i])
                     file.write(str(reward) + '\n')
             message = "reward assgined to shortest_path_env_"+ str(env) + "_goal_" + str(g) + "_traj_" + str(traj) + " complete \n"
