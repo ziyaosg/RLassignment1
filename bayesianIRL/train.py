@@ -1,174 +1,175 @@
-import rclpy
-from rclpy.node import Node
-
-from geometry_msgs.msg import TwistStamped
-from tf2_ros.transform_listener import TransformListener
-from tf2_ros import TransformException
-from tf2_ros.buffer import Buffer
-
-from keras.models import load_model
-import argparse
 import numpy as np
+from sklearn.model_selection import train_test_split
+from keras.models import Sequential
+from keras.layers import Dense
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
+X = []
+Y = []
+X_test = []
+Y_test = []
 
-class PolicyPublisher(Node):
+env1_goal = np.array([[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
+env2_goal = np.array([[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
+env3_goal = np.array([[-0.035, 0.042, 1.145], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.042, 1.145]])
+goals = np.array([env1_goal, env2_goal, env3_goal])
+env1_decoy = np.array([[-0.383379, 0.165331, 1.14576], [-0.183635, 0.239076, 1.31077], [-0.153111, 0.110957, 1.29395],
+                       [0.022497, 0.180345, 1.1708]])
+env2_decoy = np.array([[-0.416498, 0.078665, 1.32583], [-0.196313, 0.310306, 1.34149], [-0.133594, 0.184351, 1.34316],
+                       [-0.074792, 0.148929, 1.43017]])
+env3_decoy = np.array([[-0.344683, 0.024459, 1.20518], [-0.16924, 0.226221, 1.2826], [-0.099357, 0.12819, 1.32999],
+                       [-0.024455, 0.073603, 1.2148]])
+decoys = np.array([env1_decoy, env2_decoy, env3_decoy])
+for i in range(2):
+    for j in range(4):
+        for k in range(3):
+            env = i
+            g = j
+            traj = k + 1
+            input_file_name = "../eefPlanning/shortest_path_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(
+                traj) + "_eef.txt"
 
-    def __init__(self, env, goal, task, goal_pose, decoy_pose, actions, model):
-        super().__init__('policy_publisher')
-        self.env = env
-        self.goal = goal
-        self.task = task
-        self.goal_pose = goal_pose
-        self.decoy_pose = decoy_pose
-        self.actions = actions
-        self.model = model
+            with open(input_file_name, 'r') as file:
+                data = file.read().splitlines()
+            file.close()
 
-        self.policy = policy
-        self.ee_pose = None
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+            ee_traj = []
+            for lines in data:
+                ee_traj.append(lines[1: -1])
 
-        # We publish end-effector commands to this topic
-        self.publisher_ = self.create_publisher(TwistStamped, '/servo_server/delta_twist_cmds', 10)
+            for n in range(len(ee_traj)):
+                ee_pose = ee_traj[n].split(',')
+                ee_pose = np.array([float(m) for m in ee_pose])
+                ee_pose = np.append(ee_pose, goals[env][g])
+                ee_pose = np.append(ee_pose, decoys[env])
+                X.append(ee_pose)
+X = np.array(X)
+for i in range(2):
+    for j in range(4):
+        for k in range(3):
+            env = i
+            g = j
+            traj = k + 1
+            input_file_name = "../reward/path_reward_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(
+                traj) + ".txt"
 
-        # This will get the next action from the policy every 0.1 seconds
-        self.policy_timer = self.create_timer(0.5, self.policy_callback)
+            with open(input_file_name, 'r') as file:
+                data = file.read().splitlines()
+            file.close()
 
-        # This will check the robot's current end-effector pose every 0.1 seconds
-        self.tf_timer = self.create_timer(0.1, self.eef_callback)
+            rewards = []
+            for lines in data:
+                rewards.append(lines[1: -1])
 
-    def eef_callback(self):
-        # Look up the end-effector pose using the transform tree
-        try:
-            t = self.tf_buffer.lookup_transform(
-                "link_base",  # to_frame_rel,
-                "link_eef",  # from_frame_rel,
-                rclpy.time.Time())
-        except TransformException as ex:
-            self.get_logger().info(
-                f'Could not get transform: {ex}')
-            rclpy.time.sleep(1)
-            return
+            for n in range(len(rewards)):
+                reward = rewards[n].split()
+                reward = np.array([float(m) for m in reward])
+                Y.append(reward)
+Y = np.array(Y)
 
-        self.ee_pose = t.transform.translation
+for j in range(4):
+    for k in range(3):
+        env = 2
+        g = j
+        traj = k + 1
+        input_file_name = "../eefPlanning/shortest_path_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(
+            traj) + "_eef.txt"
 
-    def sample_reward(self, current_reward):
-        return current_reward + 0.25 * np.random.randn()
+        with open(input_file_name, 'r') as file:
+            data = file.read().splitlines()
+        file.close()
 
-    def likelihood(self, reward, state_score):
-        return np.exp(-np.square(reward - state_score))
+        ee_traj = []
+        for lines in data:
+            ee_traj.append(lines[1: -1])
 
-    def calculate_reward(self, state):
-        current_reward = np.random.rand()
-        state_score = self.model.predict(state)[self.task]
-        for i in range(50):
-            proposed_reward = self.sample_reward(current_reward)
-            acceptance_probability = min(1, self.likelihood(proposed_reward, state_score) / self.likelihood(current_reward, state_score))
+        for n in range(len(ee_traj)):
+            ee_pose = ee_traj[n].split(',')
+            ee_pose = np.array([float(m) for m in ee_pose])
+            ee_pose = np.append(ee_pose, goals[env][g])
+            ee_pose = np.append(ee_pose, decoys[env])
+            X_test.append(ee_pose)
 
-            if np.random.rand() < acceptance_probability:
-                current_reward = proposed_reward
+X_test = np.array(X_test)
 
-        return current_reward
+for j in range(4):
+    for k in range(3):
+        env = 2
+        g = j
+        traj = k + 1
+        input_file_name = "../reward/path_reward_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(traj) + ".txt"
 
-    def policy_callback(self):
-        if self.ee_pose is None:
-            print("Waiting for ee pose...")
-            return
-        current_pose = np.array([self.ee_pose.x, self.ee_pose.y, self.ee_pose.z])
-        pose_in_world = np.array([-0.2 - current_pose[1], -0.5 + current_pose[0], 1.021 + current_pose[2]])
-        distance = np.sqrt(np.sum((pose_in_world - self.goal_pose) ** 2))
-        if distance > 0.05:
-            reward = []
-            for action in self.actions:
-                future_pose = current_pose + action
-                input_state = np.append(future_pose, self.goal_pose)
-                input_state = np.append(input_state, self.decoy_pose)
-                r = self.calculate_reward(input_state)
-                reward.append(r)
-            index = np.argmax(reward)
-            result = self.actions[index]
+        with open(input_file_name, 'r') as file:
+            data = file.read().splitlines()
+        file.close()
 
-            # Convert the action vector into a Twist message
-            twist = TwistStamped()
-            twist.twist.linear.x = result[0]
-            twist.twist.linear.y = result[1]
-            twist.twist.linear.z = result[2]
-            twist.twist.angular.x = 0.0
-            twist.twist.angular.y = 0.0
-            twist.twist.angular.z = 0.0
-            twist.header.frame_id = "link_base"
-            twist.header.stamp = self.get_clock().now().to_msg()
+        rewards = []
+        for lines in data:
+            rewards.append(lines[1: -1])
 
-            self.publisher_.publish(twist)
+        for n in range(len(rewards)):
+            reward = rewards[n].split()
+            reward = np.array([float(m) for m in reward])
+            Y_test.append(reward)
 
+Y_test = np.array(Y_test)
 
-def main(args=None):
-    env1_goal = np.array(
-        [[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
-    env2_goal = np.array(
-        [[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
-    env3_goal = np.array(
-        [[-0.035, 0.042, 1.145], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.042, 1.145]])
-    goals = np.array([env1_goal, env2_goal, env3_goal])
-    env1_decoy = np.array(
-        [[-0.383379, 0.165331, 1.14576], [-0.183635, 0.239076, 1.31077], [-0.153111, 0.110957, 1.29395],
-         [0.022497, 0.180345, 1.1708]])
-    env2_decoy = np.array(
-        [[-0.416498, 0.078665, 1.32583], [-0.196313, 0.310306, 1.34149], [-0.133594, 0.184351, 1.34316],
-         [-0.074792, 0.148929, 1.43017]])
-    env3_decoy = np.array([[-0.344683, 0.024459, 1.20518], [-0.16924, 0.226221, 1.2826], [-0.099357, 0.12819, 1.32999],
-                           [-0.024455, 0.073603, 1.2148]])
-    decoys = np.array([env1_decoy, env2_decoy, env3_decoy])
+seeds = range(1, 5)
+train_evaluations = []
+test_evaluations = []
+for seed in seeds:
+    X_train, X_val, y_train, y_val = train_test_split(X, Y, test_size=0.2 * seed, random_state=seed)
 
-    parser = argparse.ArgumentParser()
+    print(X_train.shape)
+    print(X_val.shape)
+    print(y_train.shape)
+    print(y_val.shape)
 
-    parser.add_argument("-env", "--environment", dest="env", default=1, help="Environment number", type=int)
-    parser.add_argument("-g", "--goal", dest="g", default=1, help="Goal number", type=int)
-    parser.add_argument("-task", "--task", dest="task", default=1, help="Task number", type=int)
-    parser.add_argument("-number", "--number", dest="number", default=435,
-                        help="Number of Training Samples 435, 326, 217, or 108", type=int)
+    model = Sequential()
 
-    args = parser.parse_args()
+    model.add(Dense(32, input_dim=18, activation='relu'))
+    model.add(Dense(16, activation='relu'))
+    model.add(Dense(3, activation='linear'))
 
-    env = args.env - 1  # 1~3
-    g = args.g - 1  # 1~8
-    task = args.task - 1  # 1~3
-    number = args.number
+    model.compile(loss='mean_squared_error', optimizer='adam')
 
-    model_name = "435_training_sample_model.h5"
+    history = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=50, batch_size=10)
 
-    if number == 108:
-        model_name = "108_training_sample_model.h5"
-    elif number == 217:
-        model_name = "217_training_sample_model.h5"
-    elif number == 326:
-        model_name = "326_training_sample_model.h5"
+    # Evaluate on Training Data
+    train_predictions = model.predict(X_train)
+    train_mse = mean_squared_error(y_train, train_predictions)
+    train_rmse = np.sqrt(train_mse)
+    train_mae = mean_absolute_error(y_train, train_predictions)
+    train_r2 = r2_score(y_train, train_predictions)
 
-    # Sample policy that will move the end-effector in a box-like shape
-    model = load_model(model_name)
+    train_evaluation = [X_train.shape[0], train_mse, train_rmse, train_mae, train_r2]
+    train_evaluations.append(train_evaluation)
 
-    action_x = [-0.02, 0, 0.02]
-    action_y = [-0.02, 0, 0.02]
-    action_z = [-0.02, 0, 0.02]
-    actions = []
-    for a_x in action_x:
-        for a_y in action_y:
-            for a_z in action_z:
-                actions.append([a_x, a_y, a_z])
-    actions = np.array(actions)
+    # Evaluate on Test Data
+    test_predictions = model.predict(X_test)
+    test_mse = mean_squared_error(Y_test, test_predictions)
+    test_rmse = np.sqrt(test_mse)
+    test_mae = mean_absolute_error(Y_test, test_predictions)
+    test_r2 = r2_score(Y_test, test_predictions)
 
-    rclpy.init(args=args)
+    test_evaluation = [X_train.shape[0], test_mse, test_rmse, test_mae, test_r2]
+    test_evaluations.append(test_evaluation)
 
-    policy_publisher = PolicyPublisher(env, g, task, goals[env][g], decoys[env], actions, model)
+    name = str(X_train.shape[0]) + '_training_sample_model.h5'
+    model.save(name)
+    output_string = 'complete ' + str(seed) + '\n'
+    print(output_string)
 
-    rclpy.spin(policy_publisher)
+file_path = "./training_evaluation.txt"
 
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
-    policy_publisher.destroy_node()
-    rclpy.shutdown()
+with open(file_path, 'w') as file:
+    for line in train_evaluations:
+        file.write(str(line) + '\n')
+file.close()
 
+file_path = "./testing_evaluation.txt"
 
-if __name__ == '__main__':
-    main()
+with open(file_path, 'w') as file:
+    for line in test_evaluations:
+        file.write(str(line) + '\n')
+file.close()

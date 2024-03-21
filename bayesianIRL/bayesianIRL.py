@@ -1,92 +1,174 @@
+import rclpy
+from rclpy.node import Node
+
+from geometry_msgs.msg import TwistStamped
+from tf2_ros.transform_listener import TransformListener
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+
+from keras.models import load_model
+import argparse
 import numpy as np
-from .policy import PolicyBase
-import copy
 
 
-def q_learn(env, policy, n_episode=int(1e4), epi_length=10, gamma=0.95, alpha=0.1):
-    assert isinstance(policy, PolicyBase), 'policy must inherit Policy class'
-    q_values = np.ones((env.n_states, env.n_actions))
-    obs = env.reset()
-    for _ in range(n_episode):
-        for i in range(epi_length):
-            action = policy(q_values[obs])
-            next_obs, reward = env.step(action)
-            q_values[obs, action] = q_values[obs, action] \
-                                    + alpha * (reward + gamma * np.max(q_values[next_obs]) - q_values[obs, action])
-            obs = next_obs
-        obs = env.reset()
-    return q_values
+class PolicyPublisher(Node):
+
+    def __init__(self, env, goal, task, goal_pose, decoy_pose, actions, model):
+        super().__init__('policy_publisher')
+        self.env = env
+        self.goal = goal
+        self.task = task
+        self.goal_pose = goal_pose
+        self.decoy_pose = decoy_pose
+        self.actions = actions
+        self.model = model
+
+        self.policy = policy
+        self.ee_pose = None
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # We publish end-effector commands to this topic
+        self.publisher_ = self.create_publisher(TwistStamped, '/servo_server/delta_twist_cmds', 10)
+
+        # This will get the next action from the policy every 0.1 seconds
+        self.policy_timer = self.create_timer(0.5, self.policy_callback)
+
+        # This will check the robot's current end-effector pose every 0.1 seconds
+        self.tf_timer = self.create_timer(0.1, self.eef_callback)
+
+    def eef_callback(self):
+        # Look up the end-effector pose using the transform tree
+        try:
+            t = self.tf_buffer.lookup_transform(
+                "link_base",  # to_frame_rel,
+                "link_eef",  # from_frame_rel,
+                rclpy.time.Time())
+        except TransformException as ex:
+            self.get_logger().info(
+                f'Could not get transform: {ex}')
+            rclpy.time.sleep(1)
+            return
+
+        self.ee_pose = t.transform.translation
+
+    def sample_reward(self, current_reward):
+        return current_reward + 0.25 * np.random.randn()
+
+    def likelihood(self, reward, state_score):
+        return np.exp(-np.square(reward - state_score))
+
+    def calculate_reward(self, state):
+        current_reward = np.random.rand()
+        state_score = self.model.predict(state)[self.task]
+        for i in range(50):
+            proposed_reward = self.sample_reward(current_reward)
+            acceptance_probability = min(1, self.likelihood(proposed_reward, state_score) / self.likelihood(current_reward, state_score))
+
+            if np.random.rand() < acceptance_probability:
+                current_reward = proposed_reward
+
+        return current_reward
+
+    def policy_callback(self):
+        if self.ee_pose is None:
+            print("Waiting for ee pose...")
+            return
+        current_pose = np.array([self.ee_pose.x, self.ee_pose.y, self.ee_pose.z])
+        pose_in_world = np.array([-0.2 - current_pose[1], -0.5 + current_pose[0], 1.021 + current_pose[2]])
+        distance = np.sqrt(np.sum((pose_in_world - self.goal_pose) ** 2))
+        if distance > 0.05:
+            reward = []
+            for action in self.actions:
+                future_pose = current_pose + action
+                input_state = np.append(future_pose, self.goal_pose)
+                input_state = np.append(input_state, self.decoy_pose)
+                r = self.calculate_reward(input_state)
+                reward.append(r)
+            index = np.argmax(reward)
+            result = self.actions[index]
+
+            # Convert the action vector into a Twist message
+            twist = TwistStamped()
+            twist.twist.linear.x = result[0]
+            twist.twist.linear.y = result[1]
+            twist.twist.linear.z = result[2]
+            twist.twist.angular.x = 0.0
+            twist.twist.angular.y = 0.0
+            twist.twist.angular.z = 0.0
+            twist.header.frame_id = "link_base"
+            twist.header.stamp = self.get_clock().now().to_msg()
+
+            self.publisher_.publish(twist)
 
 
-def compute_q_via_dp(env, delta=1e-4, gamma=0.95):
-    """
-    :param env:
-    :param delta:
-    :param gamma:
-    :return: state_values, q_values
-    """
-    state_values = np.zeros(env.n_states, dtype=np.float32)
-    while True:
-        max_delta = 0
-        for s in range(env.n_states):
-            old_vs = state_values[s]
-            state_values[s] = np.max(__compute_q_s_with_v(env, s, state_values, gamma))
-            max_delta = max(abs(state_values[s] - old_vs), max_delta)
-        # print('max delta: {:>.5f}'.format(max_delta))
-        if max_delta < delta:
-            break
-    return __compute_q_with_v(env, state_values, gamma)
+def main(args=None):
+    env1_goal = np.array(
+        [[-0.035, 0.142, 1.245], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.142, 1.245]])
+    env2_goal = np.array(
+        [[-0.035, 0.042, 1.345], [-0.15, 0.042, 1.245], [-0.266, 0.142, 1.345], [-0.383, 0.042, 1.245]])
+    env3_goal = np.array(
+        [[-0.035, 0.042, 1.145], [-0.15, 0.142, 1.245], [-0.266, 0.142, 1.245], [-0.383, 0.042, 1.145]])
+    goals = np.array([env1_goal, env2_goal, env3_goal])
+    env1_decoy = np.array(
+        [[-0.383379, 0.165331, 1.14576], [-0.183635, 0.239076, 1.31077], [-0.153111, 0.110957, 1.29395],
+         [0.022497, 0.180345, 1.1708]])
+    env2_decoy = np.array(
+        [[-0.416498, 0.078665, 1.32583], [-0.196313, 0.310306, 1.34149], [-0.133594, 0.184351, 1.34316],
+         [-0.074792, 0.148929, 1.43017]])
+    env3_decoy = np.array([[-0.344683, 0.024459, 1.20518], [-0.16924, 0.226221, 1.2826], [-0.099357, 0.12819, 1.32999],
+                           [-0.024455, 0.073603, 1.2148]])
+    decoys = np.array([env1_decoy, env2_decoy, env3_decoy])
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-env", "--environment", dest="env", default=1, help="Environment number", type=int)
+    parser.add_argument("-g", "--goal", dest="g", default=1, help="Goal number", type=int)
+    parser.add_argument("-task", "--task", dest="task", default=1, help="Task number", type=int)
+    parser.add_argument("-number", "--number", dest="number", default=435,
+                        help="Number of Training Samples 435, 326, 217, or 108", type=int)
+
+    args = parser.parse_args()
+
+    env = args.env - 1  # 1~3
+    g = args.g - 1  # 1~8
+    task = args.task - 1  # 1~3
+    number = args.number
+
+    model_name = "435_training_sample_model.h5"
+
+    if number == 108:
+        model_name = "108_training_sample_model.h5"
+    elif number == 217:
+        model_name = "217_training_sample_model.h5"
+    elif number == 326:
+        model_name = "326_training_sample_model.h5"
+
+    # Sample policy that will move the end-effector in a box-like shape
+    model = load_model(model_name)
+
+    action_x = [-0.02, 0, 0.02]
+    action_y = [-0.02, 0, 0.02]
+    action_z = [-0.02, 0, 0.02]
+    actions = []
+    for a_x in action_x:
+        for a_y in action_y:
+            for a_z in action_z:
+                actions.append([a_x, a_y, a_z])
+    actions = np.array(actions)
+
+    rclpy.init(args=args)
+
+    policy_publisher = PolicyPublisher(env, g, task, goals[env][g], decoys[env], actions, model)
+
+    rclpy.spin(policy_publisher)
+
+    # Destroy the node explicitly
+    # (optional - otherwise it will be done automatically
+    # when the garbage collector destroys the node object)
+    policy_publisher.destroy_node()
+    rclpy.shutdown()
 
 
-def policy_iteration(env, gamma, pi=None):
-    if pi is None:
-        pi = np.random.randint(env.n_actions, size=env.n_states)
-    n_iter = 0
-    state_values = copy.deepcopy(env.rewards)
-    while True:
-        old_pi = copy.deepcopy(pi)
-        state_values = compute_v_for_pi(env, pi, gamma, state_values)
-        pi = np.argmax(__compute_q_with_v(env, state_values, gamma), axis=1)
-        if np.all(old_pi == pi):
-            return pi
-        else:
-            n_iter += 1
-            if n_iter > 1000:
-                print('n_iter: ', n_iter)
-                print('rewards: ', env.rewards)
-
-
-def compute_v_for_pi(env, pi, gamma, state_values_pi=None, delta=1e-4):
-    """
-    policy evaluation
-    """
-    trans_probs_pi = np.concatenate([np.expand_dims(env.trans_probs[s, pi[s]], axis=0) for s in range(env.n_states)])
-    assert trans_probs_pi.shape == 2 * (env.n_states,), 'Invalid shape computed'
-    state_values_pi = copy.deepcopy(env.rewards) if state_values_pi is None else state_values_pi
-    while True:
-        max_delta = 0
-        for s in range(env.n_states):
-            old_vs = state_values_pi[s]
-            state_values_pi[s] = env.rewards[s] + trans_probs_pi[s].dot(gamma * state_values_pi)
-            max_delta = max(abs(state_values_pi[s] - old_vs), max_delta)
-        if max_delta < delta:
-            return state_values_pi
-
-
-def compute_q_for_pi(env, pi, gamma):
-    state_values = compute_v_for_pi(**locals())
-    return __compute_q_with_v(env, state_values, gamma)
-
-
-def __compute_q_with_v(env, state_values, gamma):
-    q_values = np.concatenate([np.expand_dims(__compute_q_s_with_v(env, s, state_values, gamma), axis=0)
-                               for s in range(env.n_states)])
-    assert q_values.shape == (env.n_states, env.n_actions), 'Invalid shape {}'.format(q_values.shape)
-    return q_values
-
-
-def __compute_q_s_with_v(env, s, state_values, gamma):
-    assert state_values.shape == (env.n_states,), 'Invalid state_values are given {}'.format(state_values)
-    q_values_s = env.rewards[s] + gamma * np.sum(env.trans_probs[s] * state_values, axis=-1)
-    assert q_values_s.shape == (env.n_actions,), 'Invalid shape computed'
-    return q_values_s
+if __name__ == '__main__':
+    main()
