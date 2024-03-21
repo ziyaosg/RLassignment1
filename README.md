@@ -24,11 +24,23 @@ Bayesian IRL aims to generate a probability distribution over the sapce of rewar
 
 ### Feedback to the trajectories
 
-First, I convert the joint-space poses to end-effector poses, and record it as [here](eefPlanning)
+First, I convert the joint-space poses to end-effector poses, and record it as [here](eefPlanning).
 
-Robot position with respect to the World: $[-0.2, -0.5, 1.021]$
+Then, Let $G$ be the goal position, $E$ be the end-deffector position, and $D_i$ be the $i$ th decoy position, I assign reward to different states for different behaviors as follow:
 
-End Effector position with respect to the world: [-0.2 - end_effector_pos.y, -0.5 + end_effector_pos.x, 1.021 + end_effector_pos.z]
+1. Behavior 1: $e^{-\sqrt{(G - E)^2}}$
+2. Behavior 2: $e^{-(\sqrt{(G - E)^2} - 0.2 \sum_i \sqrt{(D_i - E)^2})}$
+3. Behavior 3: $e^{-(\sqrt{(G - E)^2} + 0.2 \sum_i \sqrt{(D_i - E)^2})}$
+
+This reward make sense since it grows as the end-effector approaches the goal or attractors, and it decreases when the end-effector approaches the obstacles.
+
+However, there's one problem: the recorded end-effector position is with respect to the robot's base, and the recorded Goal and Deocy position is with respect to the world.
+
+Thus, using Gazebo, I figured out Robot's base position with respect to the World is: $[-0.2, -0.5, 1.021]$
+
+And by applying transforms, end-effector position with respect to the world is: $[-0.2 - \text{end-effector pos wrt robot base}.y, -0.5 + \text{end-effector pos wrt robot base}.x, 1.021 + \text{end-effector pos wrt robot base}.z]$
+
+Table below is the recorded Goal and Decoy positions in different environments
 
 |Env, Goal, Decoy| pos.x w.r.t the world | pos.y       | pos.z      |
 |:--------------:|:---------------------:|:-----------:|:----------:|
