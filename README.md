@@ -12,7 +12,8 @@ Bayesian IRL
 
 
 
-Robot position with respect to the World: [-0.2, -0.5, 1.021]
+Robot position with respect to the World: $[-0.2, -0.5, 1.021]$
+
 End Effector position with respect to the world: [-0.2 - end_effector_pos.y, -0.5 + end_effector_pos.x, 1.021 + end_effector_pos.z]
 
 |Env, Goal, Decoy| pos.x w.r.t the world | pos.y       | pos.z      |
