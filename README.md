@@ -24,7 +24,7 @@ Bayesian IRL aims to generate a probability distribution over the sapce of rewar
 
 ### Feedback to the trajectories
 
-First, I convert the joint-space poses to end-effector poses, and record it as [here](\eefPlanning)
+First, I convert the joint-space poses to end-effector poses, and record it as [here](eefPlanning)
 
 Robot position with respect to the World: $[-0.2, -0.5, 1.021]$
 
