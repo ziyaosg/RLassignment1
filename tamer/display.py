@@ -4,7 +4,7 @@ import numpy as np
 def main(args=None):
     evaluation_metric = ['mse', 'rmse', 'mae', 'r2']
 
-    file_path = './training_evaluation.txt'
+    file_path = './training_evaluation_joint_space.txt'
     with open(file_path, 'r') as file:
         data = file.read().splitlines()
     file.close()
@@ -14,7 +14,7 @@ def main(args=None):
         train_eval.append(number)
     train_eval = np.array(train_eval)
 
-    file_path = './testing_evaluation.txt'
+    file_path = './testing_evaluation_joint_space.txt'
     with open(file_path, 'r') as file:
         data = file.read().splitlines()
     file.close()
@@ -36,7 +36,7 @@ def main(args=None):
 
     plt.tight_layout()
 
-    plt.savefig("comparison_plots.png")
+    plt.savefig("comparison_plots_joint_space.png")
 
     plt.show()
 

@@ -26,8 +26,8 @@ for i in range(2):
             env = i
             g = j
             traj = k + 1
-            input_file_name = "../eefPlanning/shortest_path_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(
-                traj) + "_eef.txt"
+            input_file_name = "../planning/joint_space_full_traj/shortest_path_env_" + str(env) + "_goal_" + str(
+                g) + "_traj_" + str(traj) + ".txt"
 
             with open(input_file_name, 'r') as file:
                 data = file.read().splitlines()
@@ -72,8 +72,8 @@ for j in range(4):
         env = 2
         g = j
         traj = k + 1
-        input_file_name = "../eefPlanning/shortest_path_env_" + str(env) + "_goal_" + str(g) + "_traj_" + str(
-            traj) + "_eef.txt"
+        input_file_name = "../planning/joint_space_full_traj/shortest_path_env_" + str(env) + "_goal_" + str(
+            g) + "_traj_" + str(traj) + ".txt"
 
         with open(input_file_name, 'r') as file:
             data = file.read().splitlines()
@@ -127,7 +127,7 @@ for seed in seeds:
 
     model = Sequential()
 
-    model.add(Dense(32, input_dim=18, activation='relu'))
+    model.add(Dense(32, input_dim=22, activation='relu'))
     model.add(Dense(16, activation='relu'))
     model.add(Dense(3, activation='linear'))
 
@@ -155,19 +155,19 @@ for seed in seeds:
     test_evaluation = [X_train.shape[0], test_mse, test_rmse, test_mae, test_r2]
     test_evaluations.append(test_evaluation)
 
-    name = str(X_train.shape[0]) + '_training_sample_model.h5'
+    name = str(X_train.shape[0]) + '_training_sample_model_joint_space.h5'
     model.save(name)
     output_string = 'complete ' + str(seed) + '\n'
     print(output_string)
 
-file_path = "./training_evaluation.txt"
+file_path = "./training_evaluation_joint_space.txt"
 
 with open(file_path, 'w') as file:
     for line in train_evaluations:
         file.write(str(line) + '\n')
 file.close()
 
-file_path = "./testing_evaluation.txt"
+file_path = "./testing_evaluation_joint_space.txt"
 
 with open(file_path, 'w') as file:
     for line in test_evaluations:
