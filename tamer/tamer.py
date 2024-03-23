@@ -6,7 +6,7 @@ from tf2_ros.transform_listener import TransformListener
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 
-from keras.models import load_model
+#from keras.models import load_model
 import argparse
 import numpy as np
 
@@ -22,7 +22,6 @@ class PolicyPublisher(Node):
         self.actions = actions
         self.model = model
 
-        self.policy = policy
         self.ee_pose = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -37,6 +36,21 @@ class PolicyPublisher(Node):
         self.tf_timer = self.create_timer(0.1, self.eef_callback)
 
 
+    def square_root_difference(self, values, reference):
+        return np.sqrt(np.sum(np.square(np.array(values) - np.array(reference))))
+
+    def calcualte_reward(self, pose, goal, decoy):
+        weight1 = np.array([1, 0, 0, 0, 0])
+        weight2 = np.array([1, -0.2, -0.2, -0.2, -0.2])
+        weight3 = np.array([1, 0.2, 0.2, 0.2, 0.2])
+        distance_goal = self.square_root_difference(pose, goal)
+        distance_decoy1 = self.square_root_difference(pose, decoy[0])
+        distance_decoy2 = self.square_root_difference(pose, decoy[1])
+        distance_decoy3 = self.square_root_difference(pose, decoy[2])
+        distance_decoy4 = self.square_root_difference(pose, decoy[3])
+        raw_score = np.array([distance_goal, distance_decoy1, distance_decoy2, distance_decoy3, distance_decoy4])
+        return np.array([np.exp(- np.dot(weight1, raw_score)), np.exp(- np.dot(weight2, raw_score)), np.exp(- np.dot(weight3, raw_score))])
+
     def eef_callback(self):
         # Look up the end-effector pose using the transform tree
         try:
@@ -47,7 +61,6 @@ class PolicyPublisher(Node):
         except TransformException as ex:
             self.get_logger().info(
                 f'Could not get transform: {ex}')
-            rclpy.time.sleep(1)
             return
 
         self.ee_pose = t.transform.translation
@@ -66,19 +79,18 @@ class PolicyPublisher(Node):
                 future_pose = current_pose + action
                 input_state = np.append(future_pose, self.goal_pose)
                 input_state = np.append(input_state, self.decoy_pose)
-                r = self.model.predict(input_state)[self.task]
+                #r = self.model.predict(input_state)[self.task]
+                future = np.array([-0.2-future_pose[1], -0.5+future_pose[0], 1.021+future_pose[2]])
+                r = self.calcualte_reward(future_pose, self.goal_pose, self.decoy_pose)[self.task]
                 reward.append(r)
             index = np.argmax(reward)
             result = self.actions[index]
 
             # Convert the action vector into a Twist message
             twist = TwistStamped()
-            twist.twist.linear.x = result[0]
-            twist.twist.linear.y = result[1]
-            twist.twist.linear.z = result[2]
-            twist.twist.angular.x = 0.0
-            twist.twist.angular.y = 0.0
-            twist.twist.angular.z = 0.0
+            twist.twist.linear.x = current_pose[0] + result[0]
+            twist.twist.linear.y = current_pose[1] + result[1]
+            twist.twist.linear.z = current_pose[2] + result[2]
             twist.header.frame_id = "link_base"
             twist.header.stamp = self.get_clock().now().to_msg()
     
@@ -120,7 +132,8 @@ def main(args=None):
 
 
     # Sample policy that will move the end-effector in a box-like shape
-    model = load_model(model_name)
+    #model = load_model(model_name)
+    model = 1
 
     action_x = [-0.02, 0, 0.02]
     action_y = [-0.02, 0, 0.02]
@@ -132,7 +145,7 @@ def main(args=None):
                 actions.append([a_x, a_y, a_z])
     actions = np.array(actions)
 
-    rclpy.init(args=args)
+    rclpy.init(args=None)
 
     policy_publisher = PolicyPublisher(env, g, task, goals[env][g], decoys[env], actions, model)
 
