@@ -48,7 +48,7 @@ In BIRL, we invert the RL problem with Bayes' Rule: rather than finding a policy
 In other words, it integrates prior knowledge with observed expert actions to derive a probability distribution over reward functions; 
 it applies Bayes' Rule to compute the posterior probability of a reward function given the observed demonstrations.
 
-\[ P(\text{reward} | \text{demonstration}) = \frac{P(\text{demonstration} | \text{reward}) \times P(\text{reward})}{P(\text{demonstration})} \]
+$P(reward | demonstration) = \frac{P(demonstration | reward) \times P(reward)}{P(demonstration)}$
 
 #### Data Modification and Training
 
