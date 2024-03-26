@@ -1,24 +1,50 @@
-# RL assignment 1 Report
+# CPSC 589 Robot Learning Assignment 1 Report
 
-## This github repo is for CPSC 589 Spring '24 HW1
 
-### Behaviors to learn
+## Collaborators
+Eason Ding
 
-1. Go directly to the Goal
-2. Go to the Goal but avoid the Decoys
-3. Go to the Goal but is attracted to the Decoys
+Chuhan Li
 
-### Algoithm picked
+Anushka Potdar
 
-#### [TAMER](https://www.researchgate.net/publication/220916820_Interactively_shaping_agents_via_human_reinforcement_the_TAMER_framework) framework
+## Target Behaviors
 
-![pseudocode_RL](tamer/pseudocode_TAMER.png)
+1. Be near the goal
+2. Be near the goal and avoid the decoys
+3. Primarily be near the goal and secondarily be near the decoy
 
-Tamer aims to predict human reward given the oneline human feedback, then using the reward to guide the robot's behavior. For this assignment, I would use MLP to replace the ReinModel provided in the pseudocode. Further, since we already have demonstration data, I will seperate the training and executing process. In other words, I will first do an offline training on human rewards for given demonstrations, then using the trained model to guide robot's behavior.
+## Algorithms Implemented
 
-#### [Bayesian IRL](https://www.researchgate.net/publication/220815343_Bayesian_Inverse_Reinforcement_Learning) 
+### [TAMER](https://www.researchgate.net/publication/220916820_Interactively_shaping_agents_via_human_reinforcement_the_TAMER_framework)
+#### Intro
+Tamer models the human reinforcement and uses this model to choose actions expected to be the most reinforced. 
+It is originally an online learning framework where human feedback will be reflected in real time; 
+our implementation is a simplified version of this framework where human preference for each state is known beforehand and can be modeled offline.
 
-![pseudocode_IRL](bayesianIRL/Pseudocode_BayesianIRL.png)
+#### Data Modification and Training
+Our model has an input dimension of 22 (7d joint angles + 3d goal position + 4 * 3d decoy positions) and an output dimension 3 (3 behaviors).
+Human preferences are defined as the 3 target behaviors above, so rewards for each set of 7 joint angles can be calculated in advance (equations shown below).
+They are given in terms of distance between the end effector and the goal as well as distance between the end effector and the decoys, 
+and used as ground truth in training. The end effector position are transformed from with respect to the robot base to be with respect to the world by [-0.2, -0.5, 1.021].
+
+#### Execution
+After training, each output of the model corresponds to a reward predicted for a behavior. We formalized our next step prediction as a search problem.
+There are 3 actions that could be taken for each joint: decrease angle, idle, increase angle; there are 7 joints in total.
+So our search space has 3^7 possible action combinations. By randomly sampling 80% of all the combinations, 
+we select the best one according to our model output. The plan and execute script is adapted from the xarmJointPlanningClient provided to execute demo trajectories.
+The policy publisher contains 3 callback functions where joint_callback() is invoked whenever a new message is received from the '/joint_states' topic, 
+and policy_callback() and eef_callback() are invoked based on a set timer. 
+
+
+### [Bayesian IRL](https://www.researchgate.net/publication/220815343_Bayesian_Inverse_Reinforcement_Learning)
+
+#### Intro
+BIRL integrates prior knowledge with observed expert actions to derive a probability distribution over reward functions $P(reward | Demonstration)$.
+
+#### Data Modification and Training
+By assuming $P(reward)$ and $P(D)$ to be uniform, we aim to calculate $P(Demonstration | reward)$. Since we are training for the same 3 behaviors,
+we are using the pre-calculated human reward to be the expert reward. For unseen 
 
 Bayesian IRL aims to generate a probability distribution over the sapce of reward functions using Inverse Reinforcement Learning. In other words, this method focuses on inferring $P(reward | Demonstration)$. However, BIRL assumes that the expert has the attention to maximize the reward function of the given behavior, and since the provided demonstrations do not explicitly exhibit behaviors such as object avoiding, I will slightly modify the BIRL to make it suitable for my task. First, I assume $P(reward)$ and $P(D)$ is uniform, so that I only need to calculate $P(Demonstration | reward)$. Second, since I've already assigned human reward for all the demonstrations from previous task, I can approximate $P(Demonstration| reward)$ by using the expert reward (the ground truth $\hat{R}$) and the proposed reward ($\tilde{R}$). In my case, $P(Demonstration| reward) = e^{-(\hat{R} - \tilde{R})^2}$. Since the expert reward only covers states that is in the demonstration, I would need to train an MLP that could generate expert reward for all the states. Lastly, the robot will need to do online approximation of $\hat{R}$ using $\tilde{R}$, and use $\tilde{R}$ to guide its behavior.
 
@@ -76,6 +102,8 @@ Table below is the recorded Goal and Decoy positions in different environments
 |Env 3, Decoy 2  |-0.16924		 |0.226221     |1.2826      |
 |Env 3, Decoy 3  |-0.099357              |0.12819      |1.32999     |
 |Env 3, Decoy 4  |-0.024455	  	 |0.073603     |1.2148      |
+
+
 
 ### Training and Testing result
 
