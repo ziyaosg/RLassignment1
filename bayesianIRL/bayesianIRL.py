@@ -1,41 +1,79 @@
 import rclpy
 from rclpy.node import Node
 
+from xarm_msgs.srv import PlanJoint
+from xarm_msgs.srv import PlanExec
 from geometry_msgs.msg import TwistStamped
+from sensor_msgs.msg import JointState
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
-
+import random
+import sys
 from keras.models import load_model
 import argparse
 import numpy as np
 
 
+class xarmJointPlanningClient(Node):
+
+    def __init__(self):
+        super().__init__('xarm_joint_planning_client')
+        self.plan_cli = self.create_client(PlanJoint, 'xarm_joint_plan')
+        self.exec_cli = self.create_client(PlanExec, 'xarm_exec_plan')
+
+    def plan_and_execute(self, pose):
+        while not self.plan_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('service not available, waiting again...')
+        self.plan_req = PlanJoint.Request()
+        self.plan_req.target = pose
+        self.plan_future = self.plan_cli.call_async(self.plan_req)
+        rclpy.spin_until_future_complete(self, self.plan_future)
+        res = self.plan_future.result()
+        if res.success:
+            self.get_logger().info('Planning success executing...')
+            while not self.exec_cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info('service not available, waiting again...')
+            self.exec_req = PlanExec.Request()
+            self.exec_req.wait = True
+            self.exec_future = self.exec_cli.call_async(self.exec_req)
+            rclpy.spin_until_future_complete(self, self.exec_future)
+            return self.exec_future.result()
+        else:
+            self.get_logger().info('Planning Failed!')
+            return False
+
+
 class PolicyPublisher(Node):
 
-    def __init__(self, env, goal, task, goal_pose, decoy_pose, actions, model):
+    def __init__(self, env, goal, task, goal_pose, decoy_pose, model):
         super().__init__('policy_publisher')
         self.env = env
         self.goal = goal
         self.task = task
         self.goal_pose = goal_pose
         self.decoy_pose = decoy_pose
-        self.actions = actions
         self.model = model
+        self.client = xarmJointPlanningClient()
+        self.joint_pose = None
+        self.prev = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.preprev = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-        self.policy = policy
         self.ee_pose = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-
-        # We publish end-effector commands to this topic
-        self.publisher_ = self.create_publisher(TwistStamped, '/servo_server/delta_twist_cmds', 10)
+        self.subscription = self.create_subscription(JointState, '/joint_states', self.joint_callback, 10)
 
         # This will get the next action from the policy every 0.1 seconds
         self.policy_timer = self.create_timer(0.5, self.policy_callback)
 
         # This will check the robot's current end-effector pose every 0.1 seconds
         self.tf_timer = self.create_timer(0.1, self.eef_callback)
+
+    def joint_callback(self, msg):
+        joint_pose = [msg.position[4], msg.position[0], msg.position[1], msg.position[5], msg.position[2],
+                      msg.position[3], msg.position[6]]
+        self.joint_pose = np.array(joint_pose)
 
     def eef_callback(self):
         # Look up the end-effector pose using the transform tree
@@ -47,10 +85,27 @@ class PolicyPublisher(Node):
         except TransformException as ex:
             self.get_logger().info(
                 f'Could not get transform: {ex}')
-            rclpy.time.sleep(1)
             return
 
         self.ee_pose = t.transform.translation
+
+    def sample_actions(self, current_pose):
+        action_j = [-0.1, 0, 0.1]
+        future_poses = []
+        for a in action_j:
+            for b in action_j:
+                for c in action_j:
+                    for d in action_j:
+                        for e in action_j:
+                            for f in action_j:
+                                for g in action_j:
+                                    rand = random.random()
+                                    action = [a, b, c, d, e, f, g]
+                                    pose = current_pose + action
+                                    if not (min(pose) < -2 or max(pose) > 2):  # constraint on joint movement
+                                        if rand < 0.8:  # randomly sample 80% of possible actions to avoid local minimum
+                                            future_poses.append(pose)
+        return future_poses
 
     def sample_reward(self, current_reward):
         return current_reward + 0.25 * np.random.randn()
@@ -60,10 +115,14 @@ class PolicyPublisher(Node):
 
     def calculate_reward(self, state):
         current_reward = np.random.rand()
+
         state_score = self.model.predict(state)[self.task]
+
         for i in range(50):
             proposed_reward = self.sample_reward(current_reward)
-            acceptance_probability = min(1, self.likelihood(proposed_reward, state_score) / self.likelihood(current_reward, state_score))
+            acceptance_probability = min(1,
+                                         self.likelihood(proposed_reward, state_score) / self.likelihood(current_reward,
+                                                                                                         state_score))
 
             if np.random.rand() < acceptance_probability:
                 current_reward = proposed_reward
@@ -74,32 +133,34 @@ class PolicyPublisher(Node):
         if self.ee_pose is None:
             print("Waiting for ee pose...")
             return
+        if self.joint_pose is None:
+            print("Waiting for joint pose...")
+            return
         current_pose = np.array([self.ee_pose.x, self.ee_pose.y, self.ee_pose.z])
         pose_in_world = np.array([-0.2 - current_pose[1], -0.5 + current_pose[0], 1.021 + current_pose[2]])
         distance = np.sqrt(np.sum((pose_in_world - self.goal_pose) ** 2))
         if distance > 0.05:
             reward = []
-            for action in self.actions:
-                future_pose = current_pose + action
-                input_state = np.append(future_pose, self.goal_pose)
-                input_state = np.append(input_state, self.decoy_pose)
+            current_joint = self.joint_pose
+            future_poses = self.sample_actions(current_joint)
+            for action in future_poses:
+                input_state = np.append(action, self.goal_pose)
+                input_state = np.append(action, self.decoy_pose)
                 r = self.calculate_reward(input_state)
                 reward.append(r)
             index = np.argmax(reward)
-            result = self.actions[index]
+            result = future_poses[index]
 
-            # Convert the action vector into a Twist message
-            twist = TwistStamped()
-            twist.twist.linear.x = result[0]
-            twist.twist.linear.y = result[1]
-            twist.twist.linear.z = result[2]
-            twist.twist.angular.x = 0.0
-            twist.twist.angular.y = 0.0
-            twist.twist.angular.z = 0.0
-            twist.header.frame_id = "link_base"
-            twist.header.stamp = self.get_clock().now().to_msg()
+            target_pose = [result[0], result[1], result[2], result[3], result[4], result[5], result[6]]
 
-            self.publisher_.publish(twist)
+            response = self.client.plan_and_execute(target_pose)
+            print(response)
+            print(target_pose)
+            if response:
+                self.preprev = self.prev
+                self.prev = target_pose
+            if not response:
+                self.client.plan_and_execute(self.preprev)
 
 
 def main(args=None):
@@ -135,31 +196,20 @@ def main(args=None):
     task = args.task - 1  # 1~3
     number = args.number
 
-    model_name = "435_training_sample_model.h5"
+    model_name = "435_training_sample_model_joint_space.h5"
 
     if number == 108:
-        model_name = "108_training_sample_model.h5"
+        model_name = "108_training_sample_model_joint_space.h5"
     elif number == 217:
-        model_name = "217_training_sample_model.h5"
+        model_name = "217_training_sample_model_joint_space.h5"
     elif number == 326:
-        model_name = "326_training_sample_model.h5"
+        model_name = "326_training_sample_model_joint_space.h5"
 
-    # Sample policy that will move the end-effector in a box-like shape
     model = load_model(model_name)
 
-    action_x = [-0.02, 0, 0.02]
-    action_y = [-0.02, 0, 0.02]
-    action_z = [-0.02, 0, 0.02]
-    actions = []
-    for a_x in action_x:
-        for a_y in action_y:
-            for a_z in action_z:
-                actions.append([a_x, a_y, a_z])
-    actions = np.array(actions)
+    rclpy.init(args=None)
 
-    rclpy.init(args=args)
-
-    policy_publisher = PolicyPublisher(env, g, task, goals[env][g], decoys[env], actions, model)
+    policy_publisher = PolicyPublisher(env, g, task, goals[env][g], decoys[env], model)
 
     rclpy.spin(policy_publisher)
 
